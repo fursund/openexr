@@ -128,9 +128,14 @@ usageMessage (const char argv0[], bool verbose = false)
                 "           normal N would have if it was illuminated using\n"
                 "           the original non-blurred image.\n"
                 "           Generating the blurred image can be fairly slow.\n"
+                "           This feature is only available for cubemaps.\n"
                 "\n"
-                "-i n       set an irradiance convolution for use during the blur.\n"
-                "           n = 0 means no convolution, 1 means BRDF.\n"
+                "-i n       Use irradiance convolution for use during the blur.\n"
+                "           The argument is the the maximum mip's pixel width.\n"
+                "           This is useful if individual mip levels are being output\n"
+                "           instead of creating a single mip chain.\n"
+                "           Specifying zero will use the default which is that the\n"
+                "           maximum pixel width is the input pixel width.\n"
                 "\n"
                 "-t x y     sets the output file's tile size to x by y pixels\n"
                 "           (default is 64 by 64)\n"
@@ -201,27 +206,8 @@ getCompression (const string &str)
 
     return c;
 }
-
-int
-nextPowerOf2(int x)
-{
-    --x;
-    x = (x >> 1) | x;
-    x = (x >> 2) | x;
-    x = (x >> 3) | x;
-    x = (x >> 4) | x;
-    x = (x >> 5) | x;
-    ++x;
-    return x;
-}
-
-double
-logBase2(double x)
-{
-    return log(x) / log(2.0);
-}
-
-} // namespace
+    
+} // anon
 
 
 int
@@ -246,6 +232,8 @@ main(int argc, char **argv)
     int convolutionMethod = 0;
     bool verbose = false;
 
+    cerr << "AAAA\n";
+    
     //
     // Parse the command line.
     //
@@ -368,12 +356,17 @@ main(int argc, char **argv)
         else if (!strcmp (argv[i], "-i"))
         {
             //
-            // Set irradiance convolution method
+            // Activate irradiance convolution
             //
 
             if (i > argc - 2)
                 usageMessage (argv[0]);
 
+            // Specify the maximum mip's pixel width.
+            // This is useful if individual mip levels are being output
+            // instead of creating a single mip chain.
+            // Specifying zero will use the default which is that the
+            // maximum pixel width is the input pixel width
             maxMipPixelWidth = (int) strtod (argv[i + 1], 0);
             i += 2;
 
@@ -502,36 +495,8 @@ main(int argc, char **argv)
                         overrideInputType, verbose,
                         image, header, channels);
 
-        // roughness term using Beckmann-Phong equivalency (for convolution method 1)
-	    // cramshaw: Bent normals; improved cube map filtering
-        // We want the phong exponent to be 1 at the 4x4 pixel case,
-        // to ensure the middle pixels have a cosine falloff. (The edge pixels
-        // are filtered across faces).
-    
-        // mipRatio is the ratio of the finest map vs. the current.
-        // We subtract 3 to ensure all mip levels below a resolution of 8x8
-        // wind up evaluating a diffuse cosine lobe.
-
-        // To do, add a loop at the outer level to generate the mip levels, and add
-        // another switch to the command line to indicate multiple mip levels should be
-        // generated.
-
-        double outputMip = ceil(log((double) mapWidth) / log(2.0));
-        double largestMip = ceil(log((double) maxMipPixelWidth) / log(2.0));
-
-        outputMip = largestMip - outputMip;
-
-        if (largestMip < 4.0)
-            largestMip = 4.0;
-
-        double mipRatio = outputMip / (largestMip - 3);
-        double beckmann = max(min(1.0, pow(mipRatio, 2.0)), 0.007);
-	    double phongPower = (2 / (beckmann * beckmann)) - 1;
-
-        printf("MipRatio: %f beckmann: %f phongPower: %f\n", mipRatio, beckmann, phongPower);
-
         if (diffuseBlur)
-            blurImage2 (image, mapWidth, convolutionMethod, phongPower, verbose);
+            blurImage2 (image, mapWidth, maxMipPixelWidth, convolutionMethod, verbose);
 
         if (type == ENVMAP_CUBE)
         {

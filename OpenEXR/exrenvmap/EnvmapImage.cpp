@@ -39,29 +39,42 @@
 //
 //-----------------------------------------------------------------------------
 
-#include "EnvmapImage.h"
-#include <ImathFun.h>
+#include <EnvmapImage.h>
+#include "ImathFun.h"
 
 
-#include "namespaceAlias.h"
-using namespace CustomImf;
-using namespace IMATH_NAMESPACE;
+using namespace Imf;
+using namespace Imath;
 
 
-EnvmapImage::EnvmapImage ():
+EnvmapImage::EnvmapImage():
     _type (ENVMAP_LATLONG),
     _dataWindow (V2i (0, 0), V2i (0, 0)),
-    _pixels (1, 1)
+    _pixels (1, 1),
+    _solidAngleWeight(0),
+    _directions(0),
+    _positionsInFace(0),
+    _sof(0)
 {
     clear();
 }
 
+EnvmapImage::~EnvmapImage()
+{
+    delete[] _solidAngleWeight;
+    delete[] _directions;
+    delete[] _positionsInFace;
+}
 
 EnvmapImage::EnvmapImage (Envmap type, const Box2i &dataWindow):
     _type (type),
     _dataWindow (dataWindow),
     _pixels (dataWindow.max.y - dataWindow.min.y + 1,
-	     dataWindow.max.x - dataWindow.min.x + 1)
+             dataWindow.max.x - dataWindow.min.x + 1),
+    _solidAngleWeight(0),
+    _directions(0),
+    _positionsInFace(0),
+    _sof(0)
 {
     clear();
 }
@@ -71,10 +84,11 @@ void
 EnvmapImage::resize (Envmap type, const Box2i &dataWindow)
 {
     _pixels.resizeEraseUnsafe (dataWindow.max.y - dataWindow.min.y + 1,
-			       dataWindow.max.x - dataWindow.min.x + 1);
+                               dataWindow.max.x - dataWindow.min.x + 1);
     _type = type;
     _dataWindow = dataWindow;
 
+    precalcTables();
     clear();
 }
 
@@ -82,50 +96,27 @@ EnvmapImage::resize (Envmap type, const Box2i &dataWindow)
 void
 EnvmapImage::clear ()
 {
+    _sof = CubeMap::sizeOfFace (_dataWindow);   // picks min of width and heigth/6
+
     int w = _dataWindow.max.x - _dataWindow.min.x + 1;
     int h = _dataWindow.max.y - _dataWindow.min.y + 1;
 
     for (int y = 0; y < h; ++y)
     {
-	for (int x = 0; x < w; ++x)
-	{
-	    Rgba &p = _pixels[y][x];
-
-	    p.r = 0;
-	    p.g = 0;
-	    p.b = 0;
-	    p.a = 0;
-	}
+        for (int x = 0; x < w; ++x)
+        {
+            Rgba &p = _pixels[y][x];
+            
+            p.r = 0;
+            p.g = 0;
+            p.b = 0;
+            p.a = 0;
+        }
     }
 }
 
 
-Envmap		
-EnvmapImage::type () const
-{
-    return _type;
-}
 
-
-const Box2i &
-EnvmapImage::dataWindow () const
-{
-    return _dataWindow;
-}
-
-
-Array2D<Rgba> &
-EnvmapImage::pixels ()
-{
-    return _pixels;
-}
-
-
-const Array2D<Rgba> &
-EnvmapImage::pixels () const
-{
-    return _pixels;
-}
 
 
 
@@ -146,6 +137,7 @@ dirToPosCube (const Box2i &dataWindow, const V3f &dir)
     CubeMap::faceAndPixelPosition (dir, dataWindow, face, posInFace);
     return CubeMap::pixelPosition (face, dataWindow, posInFace);
 }
+    
 
 } // namespace
 
@@ -167,9 +159,9 @@ EnvmapImage::filteredLookup (V3f d, float r, int n) const
     V2f (* dirToPos) (const Box2i &, const V3f &);
 
     if (_type == ENVMAP_LATLONG)
-	dirToPos = dirToPosLatLong;
+        dirToPos = dirToPosLatLong;
     else
-	dirToPos = dirToPosCube;
+        dirToPos = dirToPosCube;
 
     //
     // Pick two vectors, dx and dy, of length r, that are orthogonal
@@ -180,9 +172,9 @@ EnvmapImage::filteredLookup (V3f d, float r, int n) const
     V3f dx, dy;
 
     if (abs (d.x) > 0.707f)
-	dx = (d % V3f (0, 1, 0)).normalized() * r;
+        dx = (d % V3f (0, 1, 0)).normalized() * r;
     else
-	dx = (d % V3f (1, 0, 0)).normalized() * r;
+        dx = (d % V3f (1, 0, 0)).normalized() * r;
 
     dy = (d % dx).normalized() * r;
 
@@ -201,26 +193,26 @@ EnvmapImage::filteredLookup (V3f d, float r, int n) const
 
     for (int y = 0; y < n; ++y)
     {
-	float ry = float (2 * y + 2) / float (n + 1) - 1;
-	float wy = 1 - abs (ry);
-	V3f ddy (ry * dy);
-
-	for (int x = 0; x < n; ++x)
-	{
-	    float rx = float (2 * x + 2) / float (n + 1) - 1;
-	    float wx = 1 - abs (rx);
-	    V3f ddx (rx * dx);
-	    
-	    Rgba s = sample (dirToPos (_dataWindow, d + ddx + ddy));
-
-	    float w = wx * wy;
-	    wt += w;
-
-	    cr += s.r * w;
-	    cg += s.g * w;
-	    cb += s.b * w;
-	    ca += s.a * w;
-	}
+        float ry = float (2 * y + 2) / float (n + 1) - 1;
+        float wy = 1 - abs (ry);
+        V3f ddy (ry * dy);
+        
+        for (int x = 0; x < n; ++x)
+        {
+            float rx = float (2 * x + 2) / float (n + 1) - 1;
+            float wx = 1 - abs (rx);
+            V3f ddx (rx * dx);
+            
+            Rgba s = sample (dirToPos (_dataWindow, d + ddx + ddy));
+            
+            float w = wx * wy;
+            wt += w;
+            
+            cr += s.r * w;
+            cg += s.g * w;
+            cb += s.b * w;
+            ca += s.a * w;
+        }
     }
 
     wt = 1 / wt;
@@ -244,7 +236,7 @@ EnvmapImage::sample (const V2f &pos) const
     // Interpolate bilinearly between the four nearest pixels.
     //
 
-    int x1 = IMATH_NAMESPACE::floor (pos.x);
+    int x1 = Imath::floor (pos.x);
     int x2 = x1 + 1;
     float sx = x2 - pos.x;
     float tx = 1 - sx;
@@ -252,7 +244,7 @@ EnvmapImage::sample (const V2f &pos) const
     x1 = clamp (x1, _dataWindow.min.x, _dataWindow.max.x) - _dataWindow.min.x;
     x2 = clamp (x2, _dataWindow.min.x, _dataWindow.max.x) - _dataWindow.min.x;
 
-    int y1 = IMATH_NAMESPACE::floor (pos.y);
+    int y1 = Imath::floor (pos.y);
     int y2 = y1 + 1;
     float sy = y2 - pos.y;
     float ty = 1 - sy;
@@ -273,3 +265,131 @@ EnvmapImage::sample (const V2f &pos) const
 
     return p;
 }
+
+
+namespace {
+
+    
+    // faces are ordered 0-5, as XYZ, posneg
+    V3f cardinalDirPerFace(int face, int& ix, int& iy, int& iz)
+    {
+        V3f faceDir;
+        switch (face)
+        {
+            case CUBEFACE_POS_X:
+                faceDir = V3f (1, 0, 0);
+                ix = 0;
+                iy = 1;
+                iz = 2;
+                break;
+                
+            case CUBEFACE_NEG_X:
+                faceDir = V3f (-1, 0, 0);
+                ix = 0;
+                iy = 1;
+                iz = 2;
+                break;
+                
+            case CUBEFACE_POS_Y:
+                faceDir = V3f (0, 1, 0);
+                ix = 1;
+                iy = 0;
+                iz = 2;
+                break;
+                
+            case CUBEFACE_NEG_Y:
+                faceDir = V3f (0, -1, 0);
+                ix = 1;
+                iy = 0;
+                iz = 2;
+                break;
+                
+            case CUBEFACE_POS_Z:
+                faceDir = V3f (0, 0, 1);
+                ix = 2;
+                iy = 0;
+                iz = 1;
+                break;
+                
+            case CUBEFACE_NEG_Z:
+                faceDir = V3f (0, 0, -1);
+                ix = 2;
+                iy = 0;
+                iz = 1;
+                break;
+        }
+        return faceDir;
+    }
+    
+    inline double
+    sqr (double x)
+    {
+        return x * x;
+    }
+
+
+} // anon
+
+
+void
+EnvmapImage::precalcTables() const
+{
+    _sof = CubeMap::sizeOfFace (_dataWindow);
+    _solidAngleWeight = new double[6 * _sof * _sof];
+    _directions = new Imath::V3f[6 * _sof * _sof];
+    _positionsInFace = new Imath::V2f[6 * _sof * _sof];
+    
+    for (int f = CUBEFACE_POS_X; f <= CUBEFACE_NEG_Z; ++f)
+    {
+        int ix = 0, iy = 0, iz = 0;
+        CubeMapFace face = CubeMapFace (f);
+        V3f faceDir = cardinalDirPerFace(f, ix, iy, iz);
+        
+        for (int y = 0; y < _sof; ++y)
+        {
+            bool yEdge = (y == 0 || y == _sof - 1);
+            
+            for (int x = 0; x < _sof; ++x)
+            {
+                bool xEdge = (x == 0 || x == _sof - 1);
+                
+                int index = weightIndex(f, x, y);
+                
+                double weight;
+                V2f posInFace ((float) x, (float) y);
+                V2f pos = CubeMap::pixelPosition (face, _dataWindow, posInFace);
+                _positionsInFace[index] = pos;
+                
+                V3f dir = CubeMap::direction (face, _dataWindow, posInFace).normalized();
+                _directions[index] = dir;
+                
+                //
+                // The solid angle subtended by pixel (x,y), as seen
+                // from the center of the cube, is proportional to the
+                // square of the distance of the pixel from the center
+                // of the cube and proportional to the dot product of
+                // the viewing direction and the normal of the cube
+                // face that contains the pixel.
+                //
+                
+                weight = (dir ^ faceDir) *
+                         (sqr (dir[iy] / dir[ix]) + sqr (dir[iz] / dir[ix]) + 1);
+                
+                //
+                // Pixels at the edges and corners of the
+                // cube are duplicated; we must adjust the
+                // pixel weights accordingly.
+                //
+                
+                if (xEdge && yEdge)
+                    weight /= 3;
+                else if (xEdge || yEdge)
+                    weight /= 2;
+                
+                _solidAngleWeight[index] = weight;
+            }
+        }
+    }
+}
+
+

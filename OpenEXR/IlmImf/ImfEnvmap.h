@@ -150,19 +150,31 @@ namespace LatLongMap
     // to pixelPosition(dw,latLong(dw,dir)).
     //-----------------------------------------------------
 
-    IMF_EXPORT 
+    IMF_EXPORT
     IMATH_NAMESPACE::V2f		pixelPosition (const IMATH_NAMESPACE::Box2i &dataWindow,
-				       const IMATH_NAMESPACE::V3f &direction);
+                                               const IMATH_NAMESPACE::V3f &direction);
 
+    //-----------------------------------------------------
+    // Convert a 3D direction vector into a corresponding
+    // pixel position and return the spread of pixels that
+    // contribute to that pixel for a given solid angle.
+    // 0 means no contribution, 1 means all the pixels in
+    // that row or column
+    //-----------------------------------------------------
+    
+    IMF_EXPORT
+    IMATH_NAMESPACE::V2f		pixelSpread (float angle,
+                                             const IMATH_NAMESPACE::Box2i &dataWindow,
+                                             const IMATH_NAMESPACE::V3f &direction);
 
     //--------------------------------------------------------
     // Convert the position of a pixel in a latitude-longitude
     // map into a corresponding 3D direction.
     //--------------------------------------------------------
 
-    IMF_EXPORT 
+    IMF_EXPORT
     IMATH_NAMESPACE::V3f		direction (const IMATH_NAMESPACE::Box2i &dataWindow,
-				   const IMATH_NAMESPACE::V2f &pixelPosition);
+                                           const IMATH_NAMESPACE::V2f &pixelPosition);
 }
 
 

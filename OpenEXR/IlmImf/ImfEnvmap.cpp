@@ -106,7 +106,7 @@ pixelPosition (const Box2i &dataWindow, const V2f &latLong)
     float y = latLong.x / (-1 * float(M_PI)) + 0.5f;
 
     return V2f (x * (dataWindow.max.x - dataWindow.min.x) + dataWindow.min.x,
-		y * (dataWindow.max.y - dataWindow.min.y) + dataWindow.min.y);
+                y * (dataWindow.max.y - dataWindow.min.y) + dataWindow.min.y);
 }
 
 
@@ -116,6 +116,18 @@ pixelPosition (const Box2i &dataWindow, const V3f &direction)
     return pixelPosition (dataWindow, latLong (direction));
 }
 
+    
+V2f
+pixelSpread (float angle,
+             const Box2i &dataWindow, const V3f &direction)
+{
+    V2f ll = latLong (direction);
+    float spreadx = abs (cos (ll.y));
+    float spready = abs (sin (ll.y));
+    
+    return V2f (spreadx * (dataWindow.max.x - dataWindow.min.x) + dataWindow.min.x,
+                spready * (dataWindow.max.y - dataWindow.min.y) + dataWindow.min.y);
+}
 
 V3f
 direction (const Box2i &dataWindow, const V2f &pixelPosition)
