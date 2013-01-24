@@ -59,7 +59,8 @@ makeCubeMap (EnvmapImage &image,
 	     int mapWidth,
 	     float filterRadius,
 	     int numSamples,
-	     bool verbose);
+         int face = -1,
+	     bool verbose = false);
 
 
 #endif

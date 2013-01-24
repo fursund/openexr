@@ -58,7 +58,9 @@ resizeCube (const EnvmapImage &image1,
 	    EnvmapImage &image2,
 	    const Imath::Box2i &image2DataWindow,
 	    float filterRadius,
-	    int numSamples);
+	    int numSamples,
+        int face = -1,
+        bool verbose = false);
 
 
 #endif

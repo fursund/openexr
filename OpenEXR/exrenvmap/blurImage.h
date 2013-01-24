@@ -51,7 +51,7 @@
 
 
 void
-blurImage2 (EnvmapImage &image, int outputWidth, int maxWidth, int convolutionMethod, bool verbose);
+blurImage2 (EnvmapImage &image, int outputWidth, int maxWidth, int convolutionMethod, int face, bool verbose);
 
 
 #endif

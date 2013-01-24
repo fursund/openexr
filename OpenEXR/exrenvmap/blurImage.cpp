@@ -216,6 +216,59 @@ void precalcTables(EnvmapImage* iptr1, bool verbose,
 }
 
 
+void mipOneFace(Box2i src_dw,
+                Box2i dest_dw,
+                int src_sof,
+                int dst_sof,
+                Array2D<Rgba> &src_pixels,
+                Array2D<Rgba> &dst_pixels,
+                int face,
+                bool verbose)
+{
+    if (verbose)
+        cout << "        face " << face << endl;
+    
+    CubeMapFace face2 = CubeMapFace (face);
+    
+    for (int y2 = 0; y2 < dst_sof; ++y2)
+    {
+        #pragma omp parallel for
+        for (int x2 = 0; x2 < dst_sof; ++x2)
+        {
+            V2f posInFace2 ((float) x2, (float) y2);
+            
+            V3f dir2 = CubeMap::direction (face2, dest_dw, posInFace2).normalized();
+            V2f pos2 = CubeMap::pixelPosition (face2, dest_dw, posInFace2);
+            
+            double weightTotal = 0;
+            double rTotal = 0;
+            double gTotal = 0;
+            double bTotal = 0;
+            double aTotal = 0;
+            
+            Rgba &pixel2 = dst_pixels[toInt (pos2.y)][toInt (pos2.x)];
+            
+            V2f srcPos;
+            Imf::CubeMapFace resultingFace;
+            CubeMap::faceAndPixelPosition(dir2, src_dw, resultingFace, srcPos);
+            V2f srcPixelPos = CubeMap::pixelPosition(resultingFace, src_dw, srcPos);
+            
+            Rgba& copyPixel = src_pixels[toInt(srcPixelPos.y)][toInt(srcPixelPos.x)];
+            rTotal = copyPixel.r;
+            gTotal = copyPixel.g;
+            bTotal = copyPixel.b;
+            aTotal = copyPixel.a;
+            weightTotal = 1.0;
+
+            double k = weightTotal > 0.0 ? 1.0 / weightTotal : 0.0;
+            pixel2.r = float(rTotal * k);
+            pixel2.g = float(gTotal * k);
+            pixel2.b = float(bTotal * k);
+            pixel2.a = float(aTotal * k);
+        }
+    }
+}
+
 //
 // Ideally we would blur the input image directly by convolving
 // it with a 180-degree wide blur kernel.  Unfortunately this
@@ -229,7 +282,7 @@ void precalcTables(EnvmapImage* iptr1, bool verbose,
 //   pixels wide.
 //
 void
-createMipChain (EnvmapImage &image1, int outputWidth, bool verbose)
+createMipChain (EnvmapImage &image1, int outputWidth, int face, bool verbose)
 {
     
     if (verbose)
@@ -261,51 +314,18 @@ createMipChain (EnvmapImage &image1, int outputWidth, bool verbose)
         
         Array2D<Rgba> &src_pixels = iptr1->pixels();
         Array2D<Rgba> &dst_pixels = iptr2->pixels();
-        
-        for (int f2 = CUBEFACE_POS_X; f2 <= CUBEFACE_NEG_Z; ++f2)
+                
+
+        if(face < 0 || face > 5)
         {
-            if (verbose)
-                cout << "        face " << f2 << endl;
-            
-            CubeMapFace face2 = CubeMapFace (f2);
-            
-            for (int y2 = 0; y2 < dst_sof; ++y2)
+            for (int f2 = CUBEFACE_POS_X; f2 <= CUBEFACE_NEG_Z; ++f2)
             {
-#pragma omp parallel for
-                for (int x2 = 0; x2 < dst_sof; ++x2)
-                {
-                    V2f posInFace2 ((float) x2, (float) y2);
-                    
-                    V3f dir2 = CubeMap::direction (face2, dest_dw, posInFace2).normalized();
-                    V2f pos2 = CubeMap::pixelPosition (face2, dest_dw, posInFace2);
-                    
-                    double weightTotal = 0;
-                    double rTotal = 0;
-                    double gTotal = 0;
-                    double bTotal = 0;
-                    double aTotal = 0;
-                    
-                    Rgba &pixel2 = dst_pixels[toInt (pos2.y)][toInt (pos2.x)];
-                    
-                    V2f srcPos;
-                    Imf::CubeMapFace resultingFace;
-                    CubeMap::faceAndPixelPosition(dir2, src_dw, resultingFace, srcPos);
-                    V2f srcPixelPos = CubeMap::pixelPosition(resultingFace, src_dw, srcPos);
-                    
-                    Rgba& copyPixel = src_pixels[toInt(srcPixelPos.y)][toInt(srcPixelPos.x)];
-                    rTotal = copyPixel.r;
-                    gTotal = copyPixel.g;
-                    bTotal = copyPixel.b;
-                    aTotal = copyPixel.a;
-                    weightTotal = 1.0;
- 
-                    double k = weightTotal > 0.0 ? 1.0 / weightTotal : 0.0;
-                    pixel2.r = float(rTotal * k);
-                    pixel2.g = float(gTotal * k);
-                    pixel2.b = float(bTotal * k);
-                    pixel2.a = float(aTotal * k);
-                }
+                mipOneFace(src_dw, dest_dw, src_sof, dst_sof, src_pixels, dst_pixels, face, verbose);
             }
+        }
+        else
+        {
+            mipOneFace(src_dw, dest_dw, src_sof, dst_sof, src_pixels, dst_pixels, face, verbose);
         }
         
         swap (iptr1, iptr2);
@@ -333,8 +353,109 @@ createMipChain (EnvmapImage &image1, int outputWidth, bool verbose)
     }
 }
 
+void 
+blurOneFace(int f, 
+            Array2D<Rgba> &src_pixels,
+            Array2D<Rgba> &dst_pixels, 
+            const Box2i &src_dw, const 
+            Box2i &dest_dw, 
+            int src_sof, 
+            int dst_sof, 
+            double* solidAngleWeight,
+            float* directions,
+            int* positionsInFace, 
+            float phongPower, 
+            int convolutionMethod, 
+            bool verbose)
+{
+    if(verbose)
+        printf("\n");
+
+    CubeMapFace face2 = CubeMapFace (f);
+
+    for (int y2 = 0; y2 < dst_sof; ++y2)
+    {
+        if(verbose)
+        {
+            if (y2 > 0)
+                printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b");
+            printf("        face %d percentage %10.2f \%", f, (float)(y2)/(float)(dst_sof) * 100.0f);
+            fflush(stdout);
+        }
+
+        #pragma omp parallel for
+        for (int x2 = 0; x2 < dst_sof; ++x2)
+        {
+            V2f posInFace2 ((float) x2, (float) y2);
+
+            V3f dir2 = CubeMap::direction (face2, dest_dw, posInFace2).normalized();
+            V2f pos2 = CubeMap::pixelPosition (face2, dest_dw, posInFace2);
+
+            double weightTotal = 0;
+            double rTotal = 0;
+            double gTotal = 0;
+            double bTotal = 0;
+            double aTotal = 0;
+
+            Rgba &pixel2 = dst_pixels[toInt (pos2.y)][toInt (pos2.x)];
+
+            if (!convolutionMethod)
+            {
+                V2f srcPos;
+                Imf::CubeMapFace resultingFace;
+                CubeMap::faceAndPixelPosition(dir2, src_dw, resultingFace, srcPos);
+                V2f srcPixelPos = CubeMap::pixelPosition(resultingFace, src_dw, srcPos);
+                
+                Rgba& copyPixel = src_pixels[toInt(srcPixelPos.y)][toInt(srcPixelPos.x)];
+                rTotal = copyPixel.r;
+                gTotal = copyPixel.g;
+                bTotal = copyPixel.b;
+                aTotal = copyPixel.a;
+                weightTotal = 1.0;
+            }
+            else
+            {
+                for (int f1 = CUBEFACE_POS_X; f1 <= CUBEFACE_NEG_Z; ++f1)
+                {
+                    for (int y1 = 0; y1 < src_sof; ++y1)
+                    {
+                        for (int x1 = 0; x1 < src_sof; ++x1)
+                        {
+                            int index = weightIndex(src_sof, f1, x1, y1);
+                            V3f dir1(directions[index*3], directions[index*3+1], directions[index*3+2]); 
+                            //V2f posInFace1((float) x1, (float) y1);
+                            //V3f dir1 = CubeMap::direction(src_face, src_dw, posInFace1).normalized();
+
+                            double weight = dir1 ^ dir2;
+                            if (weight <= 0)
+                                continue;
+
+                            weight = pow(weight, phongPower);
+                            weight *= solidAngleWeight[index];
+                            weightTotal += weight;
+
+                            //V2f pos1 = CubeMap::pixelPosition(src_face, src_dw, posInFace1);
+                            //Rgba &pixel1 = src_pixels[toInt(pos1.y)][toInt(pos1.x)];
+                            Rgba &pixel1 = src_pixels[positionsInFace[index*2+1]][positionsInFace[index*2]];
+                            rTotal += pixel1.r * weight;
+                            gTotal += pixel1.g * weight;
+                            bTotal += pixel1.b * weight;
+                            aTotal += pixel1.a * weight;
+                        }
+                    }
+                }
+            }
+            double k = weightTotal > 0.0 ? 1.0 / weightTotal : 0.0;
+            pixel2.r = float(rTotal * k);
+            pixel2.g = float(gTotal * k);
+            pixel2.b = float(bTotal * k);
+            pixel2.a = float(aTotal * k);
+        }
+    }
+}
+
 void
-blurImage2 (EnvmapImage &image1, int outputWidth, int maxMipPixelWidth, int convolutionMethod, bool verbose)
+blurImage2 (EnvmapImage &image1, int outputWidth, int maxMipPixelWidth, int convolutionMethod, int face, bool verbose)
 {
     // roughness term using Beckmann-Phong equivalency (for convolution method 1)
     // cramshaw: Bent normals; improved cube map filtering
@@ -365,7 +486,8 @@ blurImage2 (EnvmapImage &image1, int outputWidth, int maxMipPixelWidth, int conv
     double beckmann = max(min(1.0, pow(mipRatio, 2.0)), 0.007);
     double phongPower = (2 / (beckmann * beckmann)) - 1;
     
-    printf("MipRatio: %f beckmann: %f phongPower: %f\n", mipRatio, beckmann, phongPower);
+    if(verbose)
+        printf("MipRatio: %f beckmann: %f phongPower: %f\n", mipRatio, beckmann, phongPower);
 
     //
     // Ideally we would blur the input image directly by convolving
@@ -441,7 +563,7 @@ blurImage2 (EnvmapImage &image1, int outputWidth, int maxMipPixelWidth, int conv
 
     if (!convolutionMethod)
     {
-        createMipChain(*iptr1, outputWidth, verbose);
+        createMipChain(*iptr1, outputWidth, face, verbose);
         return;
     }
 
@@ -474,84 +596,20 @@ blurImage2 (EnvmapImage &image1, int outputWidth, int maxMipPixelWidth, int conv
         Array2D<Rgba> &src_pixels = iptr1->pixels();
         Array2D<Rgba> &dst_pixels = iptr2->pixels();
 
-        for (int f2 = CUBEFACE_POS_X; f2 <= CUBEFACE_NEG_Z; ++f2)
+        if(face < 0 || face > 5)
         {
-            if (verbose)
-                cout << "        face " << f2 << " phong " << phongPower << endl;
-
-            CubeMapFace face2 = CubeMapFace (f2);
-
-            for (int y2 = 0; y2 < dst_sof; ++y2)
+            for (int f2 = CUBEFACE_POS_X; f2 <= CUBEFACE_NEG_Z; ++f2)
             {
-                #pragma omp parallel for
-                for (int x2 = 0; x2 < dst_sof; ++x2)
-                {
-                    V2f posInFace2 ((float) x2, (float) y2);
-
-                    V3f dir2 = CubeMap::direction (face2, dest_dw, posInFace2).normalized();
-                    V2f pos2 = CubeMap::pixelPosition (face2, dest_dw, posInFace2);
-
-                    double weightTotal = 0;
-                    double rTotal = 0;
-                    double gTotal = 0;
-                    double bTotal = 0;
-                    double aTotal = 0;
-
-                    Rgba &pixel2 = dst_pixels[toInt (pos2.y)][toInt (pos2.x)];
-
-                    if (!convolutionMethod)
-                    {
-                        V2f srcPos;
-                        Imf::CubeMapFace resultingFace;
-                        CubeMap::faceAndPixelPosition(dir2, src_dw, resultingFace, srcPos);
-                        V2f srcPixelPos = CubeMap::pixelPosition(resultingFace, src_dw, srcPos);
-                        
-                        Rgba& copyPixel = src_pixels[toInt(srcPixelPos.y)][toInt(srcPixelPos.x)];
-                        rTotal = copyPixel.r;
-                        gTotal = copyPixel.g;
-                        bTotal = copyPixel.b;
-                        aTotal = copyPixel.a;
-                        weightTotal = 1.0;
-                    }
-                    else
-                    {
-                        for (int f1 = CUBEFACE_POS_X; f1 <= CUBEFACE_NEG_Z; ++f1)
-                        {
-                            for (int y1 = 0; y1 < src_sof; ++y1)
-                            {
-                                for (int x1 = 0; x1 < src_sof; ++x1)
-                                {
-                                    int index = weightIndex(src_sof, f1, x1, y1);
-                                    V3f dir1(directions[index*3], directions[index*3+1], directions[index*3+2]); 
-                                    //V2f posInFace1((float) x1, (float) y1);
-                                    //V3f dir1 = CubeMap::direction(src_face, src_dw, posInFace1).normalized();
-
-                                    double weight = dir1 ^ dir2;
-                                    if (weight <= 0)
-                                        continue;
-
-                                    weight = pow(weight, phongPower);
-                                    weight *= solidAngleWeight[index];
-                                    weightTotal += weight;
-
-                                    //V2f pos1 = CubeMap::pixelPosition(src_face, src_dw, posInFace1);
-                                    //Rgba &pixel1 = src_pixels[toInt(pos1.y)][toInt(pos1.x)];
-                                    Rgba &pixel1 = src_pixels[positionsInFace[index*2+1]][positionsInFace[index*2]];
-                                    rTotal += pixel1.r * weight;
-                                    gTotal += pixel1.g * weight;
-                                    bTotal += pixel1.b * weight;
-                                    aTotal += pixel1.a * weight;
-                                }
-                            }
-                        }
-                    }
-                    double k = weightTotal > 0.0 ? 1.0 / weightTotal : 0.0;
-                    pixel2.r = float(rTotal * k);
-                    pixel2.g = float(gTotal * k);
-                    pixel2.b = float(bTotal * k);
-                    pixel2.a = float(aTotal * k);
-                }
+                blurOneFace(f2, src_pixels, dst_pixels, src_dw, dest_dw, src_sof, 
+                            dst_sof, solidAngleWeight, directions, positionsInFace, 
+                            phongPower, convolutionMethod, verbose);
             }
+        }
+        else
+        {
+            blurOneFace(face, src_pixels, dst_pixels, src_dw, dest_dw, src_sof, 
+                        dst_sof, solidAngleWeight, directions, positionsInFace, 
+                        phongPower, convolutionMethod, verbose);
         }
 
         swap (iptr1, iptr2);

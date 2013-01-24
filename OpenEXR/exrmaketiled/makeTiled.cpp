@@ -42,6 +42,8 @@
 #include "makeTiled.h"
 #include "Image.h"
 
+#include "ImfTiledRgbaFile.h"
+#include "ImfRgbaFile.h"
 #include "ImfTiledInputPart.h"
 #include "ImfTiledOutputPart.h"
 #include "ImfInputPart.h"
@@ -62,6 +64,8 @@
 #include <algorithm>
 #include <iostream>
 #include <vector>
+#include <stdio.h>
+#include <stdlib.h>
 
 #include "namespaceAlias.h"
 using namespace CustomImf;
@@ -494,18 +498,18 @@ storeLevel (TiledOutputPart &out,
 
 
 void
-makeTiled (const char inFileName[],
-           const char outFileName[],
-           int partnum,
-           LevelMode mode,
-           LevelRoundingMode roundingMode,
-           Compression compression,
-           int tileSizeX,
-           int tileSizeY,
-           const set<string> &doNotFilter,
-           Extrapolation extX,
-           Extrapolation extY,
-           bool verbose)
+computeTiled (const char inFileName[],
+              const char outFileName[],
+              int partnum,
+              LevelMode mode,
+              LevelRoundingMode roundingMode,
+              Compression compression,
+              int tileSizeX,
+              int tileSizeY,
+              const set<string> &doNotFilter,
+              Extrapolation extX,
+              Extrapolation extY,
+              bool verbose)
 {
     Image image0;
     Image image1;
@@ -742,6 +746,103 @@ makeTiled (const char inFileName[],
                 out.copyPixels (in);
             }
         }
+    }
+}
+
+// Quickly mocked up for combining file miplevels into one
+
+void
+combineTiled (const char inFileName[],
+              const char outFileName[],
+              LevelMode mode,
+              LevelRoundingMode roundingMode,
+              Compression compression,
+              int tileSizeX,
+              int tileSizeY,
+              Extrapolation extX,
+              Extrapolation extY,
+              bool verbose)
+{
+
+    std::ostringstream numberStr;
+    numberStr.str(std::string());
+    numberStr << tileSizeX; 
+
+    size_t pos = strchr (inFileName, '%') - inFileName;
+    string currName = string (inFileName).replace (pos, 1, numberStr.str().c_str());
+
+    RgbaInputFile input (currName.c_str());
+
+    TiledRgbaOutputFile out (outFileName,
+                             input.header(),
+                             input.channels(),
+                             tileSizeX, 
+                             tileSizeY,
+                             mode,
+                             roundingMode);
+    if (verbose)
+        cout << "writing file " << outFileName << endl;
+
+  
+    for (int level = 0; level < out.numLevels(); ++level)
+    {
+        if (verbose)
+            printf("\nlevel %d", level);
+
+        numberStr.str(std::string());
+        numberStr << out.levelWidth(level); 
+
+        string currName = string (inFileName).replace (pos, 1, numberStr.str().c_str());
+
+        RgbaInputFile currInput (currName.c_str());
+
+        Box2i dw = currInput.header().dataWindow();
+
+        int w = dw.max.x - dw.min.x + 1;
+        int h = dw.max.y - dw.min.y + 1;
+
+        Array2D<Rgba> pixels(w,h);
+
+        currInput.setFrameBuffer (&pixels[-dw.min.y][-dw.min.x], 1, w);
+        currInput.readPixels (dw.min.y, dw.max.y);
+
+        out.setFrameBuffer (&pixels[0][0], 1, dw.max.x + 1);
+
+        for (int tileY = 0; tileY < out.numYTiles (level); ++tileY)
+            for (int tileX = 0; tileX < out.numXTiles (level); ++tileX)
+                out.writeTile (tileX, tileY, level);
+    }
+}
+
+void
+makeTiled (const char inFileName[],
+           const char outFileName[],
+           int partnum,
+           LevelMode mode,
+           LevelRoundingMode roundingMode,
+           Compression compression,
+           int tileSizeX,
+           int tileSizeY,
+           const set<string> &doNotFilter,
+           Extrapolation extX,
+           Extrapolation extY,
+           bool verbose)
+{
+    const char* sch = strchr (outFileName, '%');
+    
+    if(sch != NULL)
+    {
+        combineTiled (inFileName, outFileName, mode, roundingMode, compression, tileSizeX, tileSizeY, extX, extY,
+                      verbose);
+    }
+    else
+    {
+        computeTiled (inFileName, outFileName, partnum,
+                      mode, roundingMode, compression,
+                      tileSizeX, tileSizeY,
+                      doNotFilter,
+                      extX, extY,
+                      verbose);
     }
 
     if (verbose)

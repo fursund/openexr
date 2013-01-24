@@ -153,6 +153,8 @@ usageMessage (const char argv0[], bool verbose = false)
                 "\n"
                 "-z x       sets the data compression method to x\n"
                 "           (none/rle/zip/piz/pxr24/b44/b44a, default is zip)\n"
+                "-fc x      sets a single face of a cubemap to compute to x\n"
+                "           (face is from 0 to 5)\n"
                 "\n"
                 "-v         verbose mode\n"
                 "\n"
@@ -231,6 +233,7 @@ main(int argc, char **argv)
     bool diffuseBlur = false;
     int convolutionMethod = 0;
     bool verbose = false;
+    int face = -1;
 
     cerr << "AAAA\n";
     
@@ -443,6 +446,25 @@ main(int argc, char **argv)
             compression = getCompression (argv[i + 1]);
             i += 2;
         }
+        else if (!strcmp (argv[i], "-fc"))
+        {
+            //
+            // Set compression method
+            //
+
+            if (i > argc - 2)
+                usageMessage (argv[0]);
+
+            face = strtol (argv[i + 1], 0, 0);
+
+            if (face < 0 && face > 5)
+            {
+                cerr << "Face must be from 0 to 5." << endl;
+                return 1;
+            }
+            
+            i += 2;
+        }
         else if (!strcmp (argv[i], "-v"))
         {
             //
@@ -496,7 +518,7 @@ main(int argc, char **argv)
                         image, header, channels);
 
         if (diffuseBlur)
-            blurImage2 (image, mapWidth, maxMipPixelWidth, convolutionMethod, verbose);
+            blurImage2 (image, mapWidth, maxMipPixelWidth, convolutionMethod, face, verbose);
 
         if (type == ENVMAP_CUBE)
         {
@@ -506,7 +528,7 @@ main(int argc, char **argv)
                          levelMode, roundingMode,
                          compression, mapWidth,
                          filterRadius, numSamples,
-                         verbose);
+                         face, verbose);
         }
         else
         {

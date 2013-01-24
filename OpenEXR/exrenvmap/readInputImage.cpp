@@ -103,8 +103,8 @@ readSingleImage (const char inFileName[],
 
     if (type == ENVMAP_LATLONG)
     {
-        pt = int (padTop * h + 0.5f);
-        pb = int (padBottom * h + 0.5f);
+        pt = int (padTop * h - 0.5f);
+        pb = int (padBottom * h - 0.5f);
     }
 
     Box2i paddedDw (V2i (dw.min.x, dw.min.y - pt),

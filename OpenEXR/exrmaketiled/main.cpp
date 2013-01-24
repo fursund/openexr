@@ -387,6 +387,8 @@ main(int argc, char **argv)
     //
     // check input
     //
+    size_t pos = strchr (inFile, '%') - inFile;
+    if(pos == -1)
     {
         MultiPartInputFile input (inFile);
         int parts = input.parts();

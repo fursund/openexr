@@ -46,6 +46,10 @@
 #include "Iex.h"
 #include <string.h>
 
+#ifdef PLATFORM_WINDOWS
+#include <omp.h>
+#endif
+
 
 using namespace std;
 using namespace Imf;
@@ -134,16 +138,233 @@ namespace {
 }
 
 
+void
+resampleOneFace(int f, 
+                const EnvmapImage &srcImage,
+                const Box2i &dstImageDW, 
+                float radius, 
+                int numSamples,
+                int dstSof,
+                Array2D<Rgba> &pixels,
+                bool verbose)
+{
+    CubeMapFace face = CubeMapFace (face);
+
+    for (int y = 0; y < dstSof; ++y)
+    {
+        for (int x = 0; x < dstSof; ++x)
+        {
+            V2f posInFace ((float) x, (float) y);
+
+            V3f dir =
+                CubeMap::direction (face, dstImageDW, posInFace);
+
+            V2f pos =
+                CubeMap::pixelPosition (face, dstImageDW, posInFace);
+
+            pixels[int (pos.y + 0.5f)][int (pos.x + 0.5f)] =
+                srcImage.filteredLookup (dir, radius, numSamples);
+        }
+    }
+}
+
+void
+latlongOneFace(int f, 
+               const EnvmapImage &srcImage,
+               EnvmapImage &dstImage,
+               const Box2i &srcImageDW, 
+               const Box2i &dstImageDW,
+               int numSamples,
+               int dstSof,
+               Array2D<Rgba> &pixels,
+               bool verbose)
+{
+    CubeMapFace face = CubeMapFace (f);
+
+    if(verbose)
+        printf("\n");
+    Box2i dw = srcImageDW;
+
+    for (int y = 0; y < dstSof; ++y)
+    {
+        if(verbose)
+        {
+            if (y > 0)
+                printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b");
+            printf("        face %d percentage %10.2f \%", f, (float)(y)/(float)(dstSof) * 100.0f);
+            fflush(stdout);
+        }
+
+        #pragma omp parallel for
+        for (int x = 0; x < dstSof; ++x)
+        {
+            int xmod = x < dstSof -1 ? (x+1)%dstSof : dstSof - 1;
+            int ymod = y < dstSof -1 ? (y+1)%dstSof : dstSof - 1;
+
+            V3f dir = dstImage.direction(face, x, y);
+            V2f samplePos = V2f(dirToPosLatLong(dw, dir));
+            Imf::Rgba sample = srcImage.pixels()[int(floorf(samplePos.y+0.5f))][int(floorf(samplePos.x+0.5f))];
+            
+            dir = dstImage.direction(face, xmod, y);
+            samplePos = V2f(dirToPosLatLong(dw, dir));
+            Imf::Rgba s2 = srcImage.pixels()[int(floorf(samplePos.y+0.5f))][int(floorf(samplePos.x+0.5f))];
+
+            dir = dstImage.direction(face, xmod, ymod);
+            samplePos = V2f(dirToPosLatLong(dw, dir));
+            Imf::Rgba s3 = srcImage.pixels()[int(floorf(samplePos.y+0.5f))][int(floorf(samplePos.x+0.5f))];
+            
+            dir = dstImage.direction(face, x, ymod);
+            samplePos = V2f(dirToPosLatLong(dw, dir));
+            Imf::Rgba s4 = srcImage.pixels()[int(floorf(samplePos.y+0.5f))][int(floorf(samplePos.x+0.5f))];
+
+            sample.r += s2.r + s3.r + s4.r;
+            sample.g += s2.g + s3.g + s4.g;
+            sample.b += s2.b + s3.b + s4.b;
+            sample.a += s2.a + s3.a + s4.a;
+            sample.r *= 0.25f;
+            sample.g *= 0.25f;
+            sample.b *= 0.25f;
+            sample.a *= 0.25f;
+
+            V2f pos = dstImage.pixelPos(face, x, y);
+            pixels[int((pos.y+0.5f))][int((pos.x+0.5f))] = sample;
+        }
+        
+    }
+}
+
+void
+cubeOneFace(int f, 
+            const EnvmapImage &srcImage,
+            EnvmapImage &dstImage,
+            const Box2i &srcImageDW, 
+            const Box2i &dstImageDW,
+            float radius, 
+            int numSamples,
+            int srcSof,
+            int dstSof,
+            Array2D<Rgba> &pixels,
+            bool verbose)
+{
+    CubeMapFace face = CubeMapFace (f);
+
+    if(verbose)
+        printf("\n");
+    
+    for (int y = 0; y < dstSof; ++y)
+    {
+        if(verbose)
+        {
+            if (y > 0)
+                printf("\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b");
+            printf("        face %d percentage %10.2f \%", f, (float)(y)/(float)(dstSof) * 100.0f);
+            fflush(stdout);
+        }
+
+        #pragma omp parallel for
+        for (int x = 0; x < dstSof; ++x)
+        {
+            const bool convolve = true;
+            if (convolve)
+            {
+                V3f dstDir = dstImage.direction(f, x, y);
+                
+                V2f pos;
+                V3f sampleDir;
+                const float phongPower = 23;
+                float rTotal = 0;
+                float gTotal = 0;
+                float bTotal = 0;
+                float aTotal = 0;
+                double weightTotal = 0.0;
+                for (int f1 = CUBEFACE_POS_X; f1 <= CUBEFACE_NEG_Z; ++f1)
+                {
+                    for (int y1 = 0; y1 < srcSof; ++y1)
+                    {
+                        for (int x1 = 0; x1 < srcSof; ++x1)
+                        {
+                            sampleDir = srcImage.direction(f1, x1, y1);
+                            double weight = sampleDir ^ dstDir;
+                            if (weight <= 0)
+                                continue;
+                            
+                            weight = pow(weight, phongPower);
+                            weight *= srcImage.solidAngleWeight(f1, x1, y1);
+                            
+                            if (weight <= FLT_EPSILON)
+                                continue;
+                            
+                            weightTotal += weight;
+                            
+                            pos = srcImage.pixelPos(f1, x1, y1);
+                            Imf::Rgba sample = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
+
+                            rTotal += sample.r * weight;
+                            gTotal += sample.g * weight;
+                            bTotal += sample.b * weight;
+                            aTotal += sample.a * weight;
+                        }
+                    }
+                }
+                double k = weightTotal > 0.0 ? 1.0 / weightTotal : 0.0;
+                Imf::Rgba sample(float(rTotal * k), float(gTotal * k), float(bTotal * k), float(aTotal * k));
+                pos = dstImage.pixelPos(f, x, y);
+                pixels[int(floorf(pos.y+0.5f))][int(floorf(pos.x+0.5f))] = sample;
+            }
+            else
+            {
+                CubeMapFace srcFace;
+                V2f pos;
+                V3f dir;
+
+                dir = dstImage.direction(face, x, y);
+                CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
+                pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
+                Imf::Rgba sample = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
+                
+                dir = dstImage.direction(face, (x+1)%dstSof, y);
+                CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
+                pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
+                Imf::Rgba s2 = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
+                
+                dir = dstImage.direction(face, (x+1)%dstSof, (y+1)%dstSof);
+                CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
+                pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
+                Imf::Rgba s3 = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
+                
+                dir = dstImage.direction(face, x, (y+1)%dstSof);
+                CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
+                pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
+                Imf::Rgba s4 = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
+                
+                sample.r += s2.r + s3.r + s4.r;
+                sample.g += s2.g + s3.g + s4.g;
+                sample.b += s2.b + s3.b + s4.b;
+                sample.a += s2.a + s3.a + s4.a;
+                sample.r *= 0.25f;
+                sample.g *= 0.25f;
+                sample.b *= 0.25f;
+                sample.a *= 0.25f;
+                
+                pos = dstImage.pixelPos(face, x, y);
+                pixels[int(floorf(pos.y+0.5f))][int(floorf(pos.x+0.5f))] = sample;
+            }
+        }
+    }
+}
 
 void
 resizeCube (const EnvmapImage &srcImage,
             EnvmapImage &dstImage,
             const Box2i &dstImageDW,
             float filterRadius,
-            int numSamples)
+            int numSamples,
+            int face,
+            bool verbose)
 {
+    
     dstImage.resize (ENVMAP_CUBE, dstImageDW);
-
+    
     if (srcImage.type() == ENVMAP_CUBE && srcImage.dataWindow() == dstImageDW)
     {
         //
@@ -171,43 +392,16 @@ resizeCube (const EnvmapImage &srcImage,
 
     if (srcImage.type() == ENVMAP_LATLONG)
     {
-        for (int f = CUBEFACE_POS_X; f <= CUBEFACE_NEG_Z; ++f)
+        if(face < 0 || face > 5)
         {
-            CubeMapFace face = CubeMapFace (f);
-            
-            for (int y = 0; y < dstSof; ++y)
+            for (int f = CUBEFACE_POS_X; f <= CUBEFACE_NEG_Z; ++f)
             {
-                for (int x = 0; x < dstSof; ++x)
-                {
-                    V3f dir = dstImage.direction(face, x, y);
-                    V2f samplePos = dirToPosLatLong(srcImageDW, dir);
-                    Imf::Rgba sample = srcImage.pixels()[int(floor(samplePos.y+0.5f))][int(floor(samplePos.x+0.5f))];
-                    
-                    dir = dstImage.direction(face, (x+1)%dstSof, y);
-                    samplePos = V2f(dirToPosLatLong(srcImageDW, dir));
-                    Imf::Rgba s2 = srcImage.pixels()[int(floor(samplePos.y+0.5f))][int(floor(samplePos.x+0.5f))];
-
-                    dir = dstImage.direction(face, (x+1)%dstSof, (y+1)%dstSof);
-                    samplePos = V2f(dirToPosLatLong(srcImageDW, dir));
-                    Imf::Rgba s3 = srcImage.pixels()[int(floor(samplePos.y+0.5f))][int(floor(samplePos.x+0.5f))];
-                    
-                    dir = dstImage.direction(face, x, (y+1)%dstSof);
-                    samplePos = V2f(dirToPosLatLong(srcImageDW, dir));
-                    Imf::Rgba s4 = srcImage.pixels()[int(floor(samplePos.y+0.5f))][int(floor(samplePos.x+0.5f))];
-
-                    sample.r += s2.r + s3.r + s4.r;
-                    sample.g += s2.g + s3.g + s4.g;
-                    sample.b += s2.b + s3.b + s4.b;
-                    sample.a += s2.a + s3.a + s4.a;
-                    sample.r *= 0.25f;
-                    sample.g *= 0.25f;
-                    sample.b *= 0.25f;
-                    sample.a *= 0.25f;
-
-                    V2f pos = dstImage.pixelPos(face, x, y);
-                    pixels[int(floorf(pos.y+0.5f))][int(floorf(pos.x+0.5f))] = sample;
-                }
+                latlongOneFace(f, srcImage, dstImage, srcImageDW, dstImageDW, numSamples, dstSof, pixels, verbose);
             }
+        }
+        else
+        {
+            latlongOneFace(face, srcImage, dstImage, srcImageDW, dstImageDW, numSamples, dstSof, pixels, verbose);
         }
         
         return;
@@ -215,102 +409,16 @@ resizeCube (const EnvmapImage &srcImage,
     
     if (srcImage.type() == ENVMAP_CUBE)
     {
-        dstImage.precalcTables();
-        for (int f = CUBEFACE_POS_X; f <= CUBEFACE_NEG_Z; ++f)
+        if(face < 0 || face > 5)
         {
-            CubeMapFace face = CubeMapFace (f);
-            
-            for (int y = 0; y < dstSof; ++y)
+            for (int f = CUBEFACE_POS_X; f <= CUBEFACE_NEG_Z; ++f)
             {
-                for (int x = 0; x < dstSof; ++x)
-                {
-                    const bool convolve = true;
-                    if (convolve)
-                    {
-                        V3f dstDir = dstImage.direction(f, x, y);
-                        
-                        V2f pos;
-                        V3f sampleDir;
-                        const float phongPower = 23;
-                        float rTotal = 0;
-                        float gTotal = 0;
-                        float bTotal = 0;
-                        float aTotal = 0;
-                        double weightTotal = 0.0;
-                        for (int f1 = CUBEFACE_POS_X; f1 <= CUBEFACE_NEG_Z; ++f1)
-                        {
-                            for (int y1 = 0; y1 < srcSof; ++y1)
-                            {
-                                for (int x1 = 0; x1 < srcSof; ++x1)
-                                {
-                                    sampleDir = srcImage.direction(f1, x1, y1);
-                                    double weight = sampleDir ^ dstDir;
-                                    if (weight <= 0)
-                                        continue;
-                                    
-                                    weight = pow(weight, phongPower);
-                                    weight *= srcImage.solidAngleWeight(f1, x1, y1);
-                                    
-                                    if (weight <= FLT_EPSILON)
-                                        continue;
-                                    
-                                    weightTotal += weight;
-                                    
-                                    pos = srcImage.pixelPos(f1, x1, y1);
-                                    Imf::Rgba sample = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
-
-                                    rTotal += sample.r * weight;
-                                    gTotal += sample.g * weight;
-                                    bTotal += sample.b * weight;
-                                    aTotal += sample.a * weight;
-                                }
-                            }
-                        }
-                        double k = weightTotal > 0.0 ? 1.0 / weightTotal : 0.0;
-                        Imf::Rgba sample(float(rTotal * k), float(gTotal * k), float(bTotal * k), float(aTotal * k));
-                        pos = dstImage.pixelPos(f, x, y);
-                        pixels[int(floorf(pos.y+0.5f))][int(floorf(pos.x+0.5f))] = sample;
-                    }
-                    else
-                    {
-                        CubeMapFace srcFace;
-                        V2f pos;
-                        V3f dir;
-
-                        dir = dstImage.direction(face, x, y);
-                        CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
-                        pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
-                        Imf::Rgba sample = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
-                        
-                        dir = dstImage.direction(face, (x+1)%dstSof, y);
-                        CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
-                        pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
-                        Imf::Rgba s2 = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
-                        
-                        dir = dstImage.direction(face, (x+1)%dstSof, (y+1)%dstSof);
-                        CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
-                        pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
-                        Imf::Rgba s3 = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
-                        
-                        dir = dstImage.direction(face, x, (y+1)%dstSof);
-                        CubeMap::faceAndPixelPosition (dir, srcImageDW, srcFace, pos);
-                        pos = srcImage.pixelPos(srcFace, floorf(pos.x+0.5f), floorf(pos.y+0.5f));
-                        Imf::Rgba s4 = srcImage.pixels()[int(floor(pos.y+0.5f))][int(floor(pos.x+0.5f))];
-                        
-                        sample.r += s2.r + s3.r + s4.r;
-                        sample.g += s2.g + s3.g + s4.g;
-                        sample.b += s2.b + s3.b + s4.b;
-                        sample.a += s2.a + s3.a + s4.a;
-                        sample.r *= 0.25f;
-                        sample.g *= 0.25f;
-                        sample.b *= 0.25f;
-                        sample.a *= 0.25f;
-                        
-                        pos = dstImage.pixelPos(face, x, y);
-                        pixels[int(floorf(pos.y+0.5f))][int(floorf(pos.x+0.5f))] = sample;
-                    }
-                }
+                cubeOneFace(f, srcImage, dstImage, srcImageDW, dstImageDW, radius, numSamples, srcSof, dstSof, pixels, verbose);
             }
+        }
+        else
+        {
+            cubeOneFace(face, srcImage, dstImage, srcImageDW, dstImageDW, radius, numSamples, srcSof, dstSof, pixels, verbose);
         }
         
         return;
@@ -324,23 +432,6 @@ resizeCube (const EnvmapImage &srcImage,
 
     for (int f = CUBEFACE_POS_X; f <= CUBEFACE_NEG_Z; ++f)
     {
-        CubeMapFace face = CubeMapFace (f);
-
-        for (int y = 0; y < dstSof; ++y)
-        {
-            for (int x = 0; x < dstSof; ++x)
-            {
-                V2f posInFace ((float) x, (float) y);
-
-                V3f dir =
-                    CubeMap::direction (face, dstImageDW, posInFace);
-
-                V2f pos =
-                    CubeMap::pixelPosition (face, dstImageDW, posInFace);
-
-                pixels[int (pos.y + 0.5f)][int (pos.x + 0.5f)] =
-                    srcImage.filteredLookup (dir, radius, numSamples);
-            }
-        }
+        resampleOneFace(f, srcImage, dstImageDW, radius, numSamples, dstSof, pixels, verbose);
     }
 }

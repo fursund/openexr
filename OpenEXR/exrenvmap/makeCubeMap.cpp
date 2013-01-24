@@ -115,10 +115,11 @@ makeCubeMapSingleFile (EnvmapImage &image1,
     for (int level = 0; level < out.numLevels(); ++level)
     {
         if (verbose)
-            cout << "level " << level << endl;
+            printf("\nlevel %d", level);
 
         Box2i dw = out.dataWindowForLevel (level);
-        resizeCube (*iptr1, *iptr2, dw, filterRadius, numSamples);
+        
+        resizeCube (*iptr1, *iptr2, dw, filterRadius, numSamples, -1, verbose);
 
         out.setFrameBuffer (&iptr2->pixels()[0][0], 1, dw.max.x + 1);
 
@@ -130,7 +131,7 @@ makeCubeMapSingleFile (EnvmapImage &image1,
     }
 
     if (verbose)
-        cout << "done." << endl;
+        cout << endl << "done." << endl;
 }
 
 
@@ -145,24 +146,50 @@ makeCubeMapSixFiles (EnvmapImage &image1,
                      int mapWidth,
                      float filterRadius,
                      int numSamples,
+                     int face,
                      bool verbose)
 {
     static const char *faceNames[] =
         {"+X", "-X", "+Y", "-Y", "+Z", "-Z"};
+    
+    const char* sch = strchr (outFileName, '%');
+    size_t pos = sch - outFileName;
+    
+    if(sch == NULL && (face < 0 || face > 6))
+    {
+        cout << "You should either supply face number or a % in your output filename" << endl;
+        return;
+    }
 
-    size_t pos = strchr (outFileName, '%') - outFileName;
-
+    cout <<  image1.dataWindow().max.x - image1.dataWindow().min.x + 1 << endl;
+    cout << mapWidth << endl;
     int mapHeight = mapWidth * 6;
     const Box2i dw (V2i (0, 0), V2i (mapWidth - 1, mapHeight - 1));
     const Box2i faceDw (V2i (0, 0), V2i (mapWidth - 1, mapWidth - 1));
 
     EnvmapImage image2;
-    resizeCube (image1, image2, dw, filterRadius, numSamples);
+    resizeCube (image1, image2, dw, filterRadius, numSamples, face, verbose);
+
     const Rgba *pixels = &(image2.pixels())[0][0];
 
-    for (int i = 0; i < 6; ++i)
+    int maxFaces = 6;
+    int startFace = 0;
+    if(face >= 0 && face < 6)
     {
-        string name = string (outFileName).replace (pos, 1, faceNames[i]);
+        startFace = face;
+        maxFaces = startFace+1;
+        if(face > 0)
+            pixels += mapWidth * mapWidth * face;
+    }
+        
+    for (int i = startFace; i < maxFaces; ++i)
+    {
+        string name;
+        if(sch == NULL)
+            name = outFileName;
+        else
+            name = string (outFileName).replace (pos, 1, faceNames[i]);
+            
 
         if (verbose)
             cout << "writing file " << name << endl;
@@ -208,9 +235,10 @@ makeCubeMap (EnvmapImage &image1,
              int mapWidth,
              float filterRadius,
              int numSamples,
+             int face,
              bool verbose)
 {
-    if (strchr (outFileName, '%'))
+    if (strchr (outFileName, '%') || (face >= 0 && face < 6))
     {
         makeCubeMapSixFiles (image1,
                              header,
@@ -222,6 +250,7 @@ makeCubeMap (EnvmapImage &image1,
                              mapWidth,
                              filterRadius,
                              numSamples,
+                             face,
                              verbose);
     }
     else
